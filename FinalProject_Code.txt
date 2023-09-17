@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Apr 18 09:52:31 2023
+
+@author: aarushisharma
+"""
+
+
+
+## 7615 Final Project Code Text File
+
+# Importing the necessary libraries
+
+import os
+import pandas as pd
+import cv2
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from imblearn.over_sampling import SMOTE
+from sklearn.model_selection import train_test_split
+from keras.utils import to_categorical
+from keras.models import Sequential
+from keras.layers import Conv2D, MaxPool2D, Dense, Flatten, Dropout, BatchNormalization
+from keras.preprocessing.image import ImageDataGenerator
+from keras.callbacks import ReduceLROnPlateau
+from keras.optimizers import Adam
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import confusion_matrix, classification_report
+from keras.callbacks import EarlyStopping, Callback
+
+
+# Loading the Pneumonia Dataset - training, test, and validation dataset
+file_paths = [os.path.join(dirname, filename)
+              for dirname, _, filenames in os.walk('/Users/aarushisharma/Documents/NEU/NEU_Course/Spring_2023/NNDL/chest_xray')
+              for filename in filenames]
+
+for path in file_paths:
+    print(path)
+
+
+
+## Set up labels and image size
+labels = ['PNEUMONIA', 'NORMAL']
+img_size = 150
+
+
+# Function to load and preprocess the image data
+def train_import(data_dir):
+    data = [] 
+    for label in labels: 
+        path = os.path.join(data_dir, label)
+        class_num = labels.index(label)
+        for img in os.listdir(path):
+            try:
+                img_arr = cv2.imread(os.path.join(path, img), cv2.IMREAD_GRAYSCALE)
+                resized_arr = cv2.resize(img_arr, (img_size, img_size)) # Reshaping images to preferred size
+                data.append([resized_arr, class_num])
+            except Exception as e:
+                print(e)
+    return np.array(data)
+
+
+## Load the data from the directory
+train = train_import('/Users/aarushisharma/Documents/NEU/NEU_Course/Spring_2023/NNDL/chest_xray/train')
+test = train_import('/Users/aarushisharma/Documents/NEU/NEU_Course/Spring_2023/NNDL/chest_xray/test')
+val = train_import('/Users/aarushisharma/Documents/NEU/NEU_Course/Spring_2023/NNDL/chest_xray/val')
+
+
+
+
+
+## Exploratory Data Analysis of the original dataset before data transformation
+train_labels = []
+[train_labels.append("Pneumonia") if label == 0 else train_labels.append("Normal") for _, label in train]
+train_labels_series = pd.Series(train_labels)
+label_counts = train_labels_series.value_counts()
+label_counts.plot.bar()
+plt.show()
+
+
+plt.figure(figsize = (5,5))
+plt.imshow(train[0][0], cmap='gray')
+plt.title(labels[train[0][1]])
+
+plt.figure(figsize = (5,5))
+plt.imshow(train[-1][0], cmap='gray')
+plt.title(labels[train[-1][1]])
+
+
+    
+# Separate features and labels for the training, validation, and test sets
+x_train = []
+y_train = []
+
+x_val = []
+y_val = []
+
+x_test = []
+y_test = []
+
+for feature, label in train:
+    x_train.append(feature)
+    y_train.append(label)
+
+for feature, label in test:
+    x_test.append(feature)
+    y_test.append(label)
+    
+for feature, label in val:
+    x_val.append(feature)
+    y_val.append(label)
+
+# Convert data to numpy arrays and normalize the pixel values to [0, 1]
+x_train = np.array(x_train) / 255
+x_val = np.array(x_val) / 255
+x_test = np.array(x_test) / 255
+
+# resize data for deep learning 
+x_train = x_train.reshape(-1, img_size, img_size, 1)
+y_train = np.array(y_train)
+
+x_val = x_val.reshape(-1, img_size, img_size, 1)
+y_val = np.array(y_val)
+
+x_test = x_test.reshape(-1, img_size, img_size, 1)
+y_test = np.array(y_test)
+
+
+
+# Set hyperparameters
+batch_size = 32
+epochs = 12
+lr = 0.000001
+
+
+
+# Data Augmentation 
+train_datagen = ImageDataGenerator(
+    rescale=1./255, shear_range = 0.2, 
+    zoom_range=0.2, 
+    horizontal_flip=True,
+    width_shift_range=0.1,  # randomly shift images horizontally (fraction of total width)
+    height_shift_range=0.1,
+    featurewise_center=False,  # set input mean to 0 over the dataset
+    samplewise_center=False,  # set each sample mean to 0
+    featurewise_std_normalization=False,  # divide inputs by std of the dataset
+    samplewise_std_normalization=False,  # divide each input by its std
+    zca_whitening=False,  # apply ZCA whitening
+    rotation_range = 30,
+    vertical_flip=False
+    )
+test_datagen = ImageDataGenerator(rescale=1./255)
+
+# =============================================================================
+# 
+# train_datagen = ImageDataGenerator(rescale=1./255, shear_range=0.2, zoom_range=0.2, horizontal_flip=True)
+# test_datagen = ImageDataGenerator(rescale=1./255)
+# 
+# =============================================================================
+# Set directories for training, validation and test datasets
+
+train_dir = '/Users/aarushisharma/Documents/NEU/NEU_Course/Spring_2023/NNDL/chest_xray/train'
+validation_dir = '/Users/aarushisharma/Documents/NEU/NEU_Course/Spring_2023/NNDL/chest_xray/val'
+test_dir = '/Users/aarushisharma/Documents/NEU/NEU_Course/Spring_2023/NNDL/chest_xray/test'
+
+
+# Set up the generators for the training, validation and test datasets
+train_generator = train_datagen.flow_from_directory(train_dir, target_size=(150, 150), batch_size=batch_size, class_mode='binary')
+validation_generator = test_datagen.flow_from_directory(validation_dir, target_size=(150, 150), batch_size=batch_size, class_mode='binary')
+test_generator = test_datagen.flow_from_directory(test_dir, target_size=(150, 150), batch_size=batch_size, class_mode='binary')
+
+
+
+# =============================================================================
+# 
+# class_indices = train_generator.class_indices
+# class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(train_generator.classes), y=train_generator.classes)
+# class_weights_dict = dict(zip(np.unique(train_generator.classes), class_weights))
+# 
+# =============================================================================
+
+
+
+
+import pandas as pd
+from sklearn.metrics import precision_score, recall_score, accuracy_score
+
+
+## Defining plots
+# =============================================================================
+# def plot_history(history, epochs):
+#     epochs_range = range(epochs)
+#     fig, ax = plt.subplots(1,2, figsize=(20, 10))
+#     ax[0].plot(epochs_range, history.history['accuracy'], label='Training Accuracy')
+#     ax[0].plot(epochs_range, history.history['val_accuracy'], label='Validation Accuracy')
+#     ax[0].set_title('Training & Validation Accuracy')
+#     ax[0].legend()
+#     ax[0].set_xlabel("Epochs")
+#     ax[0].set_ylabel("Accuracy")
+# 
+#     ax[1].plot(epochs_range, history.history['loss'], label='Training Loss')
+#     ax[1].plot(epochs_range, history.history['val_loss'], label='Validation Loss')
+#     ax[1].set_title('Training & Validation Loss')
+#     ax[1].legend()
+#     ax[1].set_xlabel("Epochs")
+#     ax[1].set_ylabel("Loss")
+#     plt.show()
+# =============================================================================
+
+
+
+# Define a function to train and evaluate the model
+def train_and_evaluate_model(batch_size, epochs, lr):
+
+    # Defining the model architecture
+    model = Sequential()
+    model.add(Conv2D(32, (3,3), activation='relu', input_shape=(150, 150, 3)))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D((2,2)))
+    model.add(Conv2D(64, (3,3), activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D((2,2)))
+    model.add(Conv2D(128, (3,3), activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D((2,2)))
+    model.add(Conv2D(256, (3,3), activation='relu'))
+    model.add(BatchNormalization())
+    model.add(MaxPool2D((2,2)))
+    model.add(Flatten())
+    model.add(Dense(units=128, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(units=1, activation='sigmoid'))
+
+    
+    # Compile the model with chosen optimizer, loss function and evaluation metric
+    model.compile(optimizer = Adam(learning_rate = lr), loss='binary_crossentropy', metrics=['accuracy'])
+
+
+    
+    # Define the callbacks
+    learning_rate_reduction = ReduceLROnPlateau(monitor='val_accuracy', patience = 3, verbose=1, factor=0.3, min_lr=0.000001)
+
+
+    
+    # Fit the model to the data with callback
+    history = model.fit(train_generator, epochs=epochs, validation_data=validation_generator, callbacks = [learning_rate_reduction])
+# =============================================================================
+#     plot_history(history, epochs)
+#     
+# =============================================================================
+    
+    # Predict on the test data
+    y_pred = model.predict(test_generator)
+    y_pred = (y_pred > 0.5).astype(int)
+    
+    
+    # Evaluate the model on the test dataset
+    test_loss, test_acc = model.evaluate(test_generator)
+    print('Test accuracy:', test_acc)
+    
+    
+    # Calculate the precision, recall, and accuracy
+    precision = precision_score(test_generator.classes, y_pred)
+    recall = recall_score(test_generator.classes, y_pred)
+    accuracy = accuracy_score(test_generator.classes, y_pred)
+    
+    return precision, recall, accuracy
+
+
+
+# Define the hyperparameters to test
+
+batch_sizes = 32
+epochs_list = [6, 12, 18]
+learning_rates = [0.000001, 0.00001, 0.0001]
+
+train_and_evaluate_model(batch_size, epochs, lr)
+
+
+
+# Create a list to store the results
+
+results = []
+
+
+# Iterate through the hyperparameters and train the model
+
+for epochs in epochs_list:
+    for lr in learning_rates:
+        
+        # Train and evaluate the model
+        precision, recall, accuracy = train_and_evaluate_model(batch_size, epochs, lr)
+        
+        # Store the results in a dictionary
+        result = {'Batch Size': batch_size, 'Epochs': epochs, 'Learning Rate': lr, 'Precision': precision, 'Recall': recall, 'Accuracy': accuracy}
+        results.append(result)
+
+# Create a dataframe to store the results
+results_df = pd.DataFrame(results)
+
+# Display the results in a table
+print(results_df)
+
+
+
+
+# =============================================================================
+# 
+# ####### Implementing the best model with highest accuracy, precision, recall
+# 
+# 
+# =============================================================================
+
+# Compile the model with chosen optimizer, loss function and evaluation metric
+
+
+# Defining the model architecture
+model = Sequential()
+model.add(Conv2D(32, (3,3), activation='relu', input_shape=(150, 150, 3)))
+model.add(BatchNormalization())
+model.add(MaxPool2D((2,2)))
+model.add(Conv2D(64, (3,3), activation='relu'))
+model.add(BatchNormalization())
+model.add(MaxPool2D((2,2)))
+model.add(Conv2D(128, (3,3), activation='relu'))
+model.add(BatchNormalization())
+model.add(MaxPool2D((2,2)))
+model.add(Conv2D(256, (3,3), activation='relu'))
+model.add(BatchNormalization())
+model.add(MaxPool2D((2,2)))
+model.add(Flatten())
+model.add(Dense(units=128, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(units=1, activation='sigmoid'))
+
+
+
+# Compile the model
+model.compile(optimizer = Adam(learning_rate = 0.0001), loss='binary_crossentropy', metrics=['accuracy'])
+
+
+train_generator = train_datagen.flow_from_directory(train_dir, target_size=(150, 150), batch_size = 32, class_mode='binary')
+validation_generator = test_datagen.flow_from_directory(validation_dir, target_size=(150, 150), batch_size = 32, class_mode='binary')
+test_generator = test_datagen.flow_from_directory(test_dir, target_size=(150, 150), batch_size = 32, class_mode='binary')
+
+
+# Define the callbacks
+learning_rate_reduction = ReduceLROnPlateau(monitor='val_accuracy', patience = 3, verbose=1, factor=0.3, min_lr=0.000001)
+
+
+# Fit the model to the data with callback
+history = model.fit(train_generator, epochs = 12, validation_data=validation_generator, callbacks = [learning_rate_reduction])
+
+
+# Predict on the test data
+y_pred = model.predict(test_generator).reshape(1, -1)[0]
+y_pred = (y_pred > 0.5).astype(int)
+
+
+# Evaluate the model on the test dataset
+test_loss, test_acc = model.evaluate(test_generator)
+print('Test accuracy:', test_acc)
+
+
+
+# Get ground truth labels for the test set
+test_labels = test_generator.classes
+print(test_labels)
+
+# Generate the confusion matrix
+conf_mat = confusion_matrix(test_labels, y_pred)
+print(conf_mat)
+
+
+conf_mat = pd.DataFrame(conf_mat , index = ['0','1'] , columns = ['0','1'])
+plt.figure(figsize = (10,10))
+sns.heatmap(conf_mat,cmap= "Blues", linecolor = 'black' , linewidth = 1 , annot = True, fmt='',xticklabels = labels,yticklabels = labels)
+
+
+print(classification_report(test_labels, y_pred, target_names = ['Pneumonia (Class 0)','Normal (Class 1)']))
+
+
+
+
+
+
+correct = np.where(test_labels == y_pred)[0]
+# =============================================================================
+# print(correct)
+# =============================================================================
+incorrect = np.where(test_labels != y_pred)[0]
+# =============================================================================
+# print(incorrect)
+# =============================================================================
+
+
+
+
+
+
+
+# Plot a few correctly predicted images of the best combination model
+
+i = 0
+fig, axes = plt.subplots(3, 2, figsize=(20, 10))
+for c, ax in zip(correct[:6], axes.flatten()):
+    img, label = next(test_generator)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.imshow(img[0], cmap="gray", interpolation='none')
+    ax.set_title("Predicted Class {}, Actual Class {}".format(y_pred[c], test_labels[c]))
+    i += 1
+
+# Remove any overlapping axes
+for ax in axes.flatten()[i:]:
+    ax.remove()
+    
+plt.tight_layout()
+plt.show()
+
+
+fig, axes = plt.subplots(3, 2, figsize=(20, 10))
+for c, ax in zip(incorrect[:6], axes.flatten()):
+    img, label = next(test_generator)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.imshow(img[0], cmap="gray", interpolation='none')
+    ax.set_title("Predicted Class {}, Actual Class {}".format(y_pred[c], test_labels[c]))
+    i += 1
+
+# Remove any overlapping axes
+for ax in axes.flatten()[i:]:
+    ax.remove()
+    
+plt.tight_layout()
+plt.show()
+
+
+
+
+epochs_range = range(1,13)
+fig, ax = plt.subplots(1,2, figsize=(20, 10))
+ax[0].plot(epochs_range, history.history['accuracy'], label='Training Accuracy')
+ax[0].plot(epochs_range, history.history['val_accuracy'], label='Validation Accuracy')
+ax[0].set_title('Training & Validation Accuracy')
+ax[0].legend()
+ax[0].set_xlabel("Epochs")
+ax[0].set_ylabel("Accuracy")
+
+ax[1].plot(epochs_range, history.history['loss'], label='Training Loss')
+ax[1].plot(epochs_range, history.history['val_loss'], label='Validation Loss')
+ax[1].set_title('Training & Validation Loss')
+ax[1].legend()
+ax[1].set_xlabel("Epochs")
+ax[1].set_ylabel("Loss")
+plt.show()
